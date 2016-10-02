@@ -30,6 +30,9 @@ import re
 # Third party
 import pexpect
 
+dfu_uuid = {"8ec90001-f315-4f60-9fb8-838830daea50": "ctrl-pt", "8ec90002-f315-4f60-9fb8-838830daea50": "data"}
+
+
 __author__ = 'Blaine Rogers <blaine.rogers@imgtec.com>'
 __credits__ = ['Jeff Rowberg', 'Greg Albrecht', 'Christopher Peplin',
 'Morten Kjaergaard', 'Michael Saunby', 'Steven Sloboda']
@@ -99,14 +102,24 @@ class BTLEDevice(object):
 
     def char_list(self):
         self._con.sendline("char-desc")
-        try:
-            data = self._con.read_nonblocking(1000, 2)
-            print(data)
-        except pexpect.TIMEOUT:
-            print(self._con.before())
+        time.sleep(1)
+        timeout = time.time() + 2
+        while True:
+            data = self._con.readline().decode("utf-8")
+            if any(uuid in data for uuid in dfu_uuid.keys()):
+                i = data.find("handle:")
+                handle = data[i+8:i+14]
+                i = data.find("uuid")
+                uuid = data[i+6:-2]
+                self._handles[dfu_uuid[uuid]] = int(handle, 16)
+                if len(self._handles) == 2:
+                    break
+                # data.translate("".join(["uuid:", "handle:"]))
+                # data = data.split(",")
+                # print(data)
+        print(self._handles)
+            # print(data)
 
-        except pexpect.EOF:
-            print("EOF")
         # print(self._con.readline())
 
     def char_read_hnd(self, handle):
@@ -166,7 +179,7 @@ class BTLEDevice(object):
                 message = 'no response received'
                 raise NoResponseError(message)
 
-    def connect(self, timeout=2):
+    def connect(self, timeout=DEFAULT_CONNECT_TIMEOUT):
         """Established a connection with the device.
 
         If connection fails, try running an LE scan first.
@@ -180,11 +193,12 @@ class BTLEDevice(object):
         """
         try:
             self._con.sendline('connect')
+            time.sleep(0.5)
             # self._con.expect(r'Connection successful*\[LE\]>', timeout)
-            self._con.expect(r'Connection successful', timeout)
+            self._con.expect('Connection successful', timeout)
             self._connected = True
-            # if not self._running:
-            #     self._thread.run()
+            if not self._running:
+                self._thread.run()
         except pexpect.TIMEOUT:
             self.stop()
             message = ('timed out after connecting to %s after %f seconds.'
@@ -217,7 +231,7 @@ class BTLEDevice(object):
             self._con.close()  # make sure gatttool is dead
             self._connected = False
 
-    def subscribe(self, handle, callback=None, type_=0):
+    def subscribe(self, handle, callback=None, _type=0):
         """Subscribes to notification/indiciatons from a characteristic.
 
         This is achieved by writing to the control handle, which is assumed
@@ -237,9 +251,9 @@ class BTLEDevice(object):
 
         Raises:
             NoResponseError: If writing to the control handle fails.
-            ValueError: If `type_` is not in {0, 1, 2}.
+            ValueError: If `_type` is not in {0, 1, 2}.
         """
-        if type_ not in {0, 1, 2}:
+        if _type not in {0, 1, 2}:
             message = ('Type must be 0 (notifications), 1 (indications), or'
                        '2 (both).')
             raise ValueError(message)
@@ -345,7 +359,7 @@ class BTLEDevice(object):
                     Notification handle = <handle> value: <value>
                     Indication   handle = <handle> value: <value>
         """
-        hex_handle, _, hex_value = string.split(msg.strip(), maxsplit=5)[3:]
+        hex_handle, _, hex_value = str.split(msg.strip().decode("utf-8"), maxsplit=5)[3:]
         handle = int(hex_handle, 16)
         value = bytearray.fromhex(hex_value)
 
